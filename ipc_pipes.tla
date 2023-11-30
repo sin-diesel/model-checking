@@ -1,54 +1,150 @@
----- MODULE ipc_pipes ----
+----------------------------- MODULE ipc_pipes -----------------------------
+EXTENDS Integers, Sequences
 
-EXTENDS Sequences, Integers
+(* --algorithm ipc_pipes
 
-VARIABLES
-    \* @type: Str
-    pipe_status,
-    \* @type: Seq(Str)
-    pipe,
-    \* @type: Int
-    pipe_size,
-    \* @type: Str
-    reader_status,
-    \* @type: Str
-    writer_status
 
-Init ==
-    /\ pipe_status = "UNCREATED"
-    /\ pipe = <<>>
-    /\ pipe_size = 0
-    /\ reader_status = "UNREAD"
-    /\ writer_status = "UNWRITE"
+variables buffer = <<>>, reader = 0, writer = 0
 
-CreatePipe ==
-    /\ pipe_status = "CREATED"
-    /\ UNCHANGED <<pipe, reader_status, writer_status>>
+define
+    MaxIterations == 10
+    BufferSize == 5
+    BufferEmpty == Len(buffer) = 0
+    BufferFull == Len(buffer) = BufferSize
+    CanRead == Len(buffer) > 0
+    CanWrite == Len(buffer) < BufferSize
 
-ReadFromPipe(m) ==
-    /\ m \in pipe
-    /\ pipe_status = "ISREAD"
-    /\ pipe' = pipe - m
-    /\ pipe_size' = pipe_size - 1
-    /\ reader_status = "READ"
-    /\ UNCHANGED <<writer_status>>
+end define;
 
-WriteToPipe(m) ==
-    /\ pipe_status = "WRITTEN"
-    /\ pipe' = pipe + m
-    /\ pipe_size' = pipe_size + 1
-    /\ writer_status' = "WRITE"
-    /\ UNCHANGED <<reader_status>>
+fair process Reader = 1
+    variables item, i = 0;
+    
+    begin
+       Read:
+        while (i =< Maxiterations) do
+            if (CanRead) then
+                item := Head(buffer);
+                buffer := Tail(buffer);
+                reader := (reader + 1) % BufferSize;
+                i := i + 1;
+            end if
+        end while;
+    end process;
 
-ClosePipe ==
-    /\ pipe_status = "CLOSED"
-    /\ UNCHANGED <<pipe, pipe_size, reader_status, writer_status>>
+fair process Writer = 2
+    variable value, i = 0;
+    begin
+        Write:
+        while (i =< Maxiterations) do
+            if (CanWrite)  then
+                buffer := Append(buffer, value);
+                writer := (writer + 1) % BufferSize;
+                i := i + 1;
+            end if;
+        end while;
+    end process;
 
-Next ==
-    /\ CreatePipe
-    /\ WriteToPipe("Hello world!")
-    /\ ReadFromPipe("Hello world!")
-    /\ ClosePipe
+end algorithm;
 
-SafetyPipeEmpty == <>(pipe_status = "CLOSED")
+\* Safety Property: Buffer Integrity
+\* The buffer should not contain more elements than its specified size.
+Invariant "Buffer Integrity":
+    Len(buffer) <= BufferSize
+
+\* Safety Property: Reader-Writer Exclusion
+\* The reader and writer should not access the buffer simultaneously.
+Invariant "Reader-Writer Exclusion":
+    \A i, j \in 1..Len(buffer) :
+        i # j => (reader % BufferSize = i - 1) \/ (writer % BufferSize = i - 1)
+
+\* Liveness Property: Reader Progress
+\* If there is data in the buffer, the reader should eventually read it.
+Fairness "Reader Progress":
+    \A i \in 1..MaxIterations :
+        CanRead => (WF_vars <<item>> : Read)
+
+\* Liveness Property: Writer Progress
+\* If there is space in the buffer, the writer should eventually write to it.
+Fairness "Writer Progress":
+    \A i \in 1..MaxIterations :
+        CanWrite => (WF_vars <<value>> : Write(value)
+
+*)
+\* BEGIN TRANSLATION (chksum(pcal) = "3243781e" /\ chksum(tla) = "418fb04d")
+\* Process variable i of process Reader at line 20 col 21 changed to i_
+CONSTANT defaultInitValue
+VARIABLES buffer, reader, writer, pc
+
+(* define statement *)
+MaxIterations == 10
+BufferSize == 5
+BufferEmpty == Len(buffer) = 0
+BufferFull == Len(buffer) = BufferSize
+CanRead == Len(buffer) > 0
+CanWrite == Len(buffer) < BufferSize
+
+VARIABLES item, i_, value, i
+
+vars == << buffer, reader, writer, pc, item, i_, value, i >>
+
+ProcSet == {1} \cup {2}
+
+Init == (* Global variables *)
+        /\ buffer = <<>>
+        /\ reader = 0
+        /\ writer = 0
+        (* Process Reader *)
+        /\ item = defaultInitValue
+        /\ i_ = 0
+        (* Process Writer *)
+        /\ value = defaultInitValue
+        /\ i = 0
+        /\ pc = [self \in ProcSet |-> CASE self = 1 -> "Read"
+                                        [] self = 2 -> "Write"]
+
+Read == /\ pc[1] = "Read"
+        /\ IF (i_ =< 10)
+              THEN /\ IF (CanRead)
+                         THEN /\ item' = Head(buffer)
+                              /\ buffer' = Tail(buffer)
+                              /\ reader' = (reader + 1) % BufferSize
+                              /\ i_' = i_ + 1
+                         ELSE /\ TRUE
+                              /\ UNCHANGED << buffer, reader, item, i_ >>
+                   /\ pc' = [pc EXCEPT ![1] = "Read"]
+              ELSE /\ pc' = [pc EXCEPT ![1] = "Done"]
+                   /\ UNCHANGED << buffer, reader, item, i_ >>
+        /\ UNCHANGED << writer, value, i >>
+
+Reader == Read
+
+Write == /\ pc[2] = "Write"
+         /\ IF (i =< 10)
+               THEN /\ IF (CanWrite)
+                          THEN /\ buffer' = Append(buffer, value)
+                               /\ writer' = (writer + 1) % BufferSize
+                               /\ i' = i + 1
+                          ELSE /\ TRUE
+                               /\ UNCHANGED << buffer, writer, i >>
+                    /\ pc' = [pc EXCEPT ![2] = "Write"]
+               ELSE /\ pc' = [pc EXCEPT ![2] = "Done"]
+                    /\ UNCHANGED << buffer, writer, i >>
+         /\ UNCHANGED << reader, item, i_, value >>
+
+Writer == Write
+
+(* Allow infinite stuttering to prevent deadlock on termination. *)
+Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
+               /\ UNCHANGED vars
+
+Next == Reader \/ Writer
+           \/ Terminating
+
+Spec == /\ Init /\ [][Next]_vars
+        /\ WF_vars(Reader)
+        /\ WF_vars(Writer)
+
+Termination == <>(\A self \in ProcSet: pc[self] = "Done")
+
+\* END TRANSLATION 
 ====
