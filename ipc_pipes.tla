@@ -46,13 +46,13 @@ fair process Writer = 2
 
 end algorithm;
 
-\* Safety Property: Buffer Integrity
-\* The buffer should not contain more elements than its specified size.
-Invariant "Buffer Integrity":
+\* Safety Property: Buffer OK
+\* Buffer not overflown
+Invariant "Buffer OK":
     Len(buffer) <= BufferSize
 
 \* Safety Property: Reader-Writer Exclusion
-\* The reader and writer should not access the buffer simultaneously.
+\* The reader and writer should not access the buffer at the same time.
 Invariant "Reader-Writer Exclusion":
     \A i, j \in 1..Len(buffer) :
         i # j => (reader % BufferSize = i - 1) \/ (writer % BufferSize = i - 1)
