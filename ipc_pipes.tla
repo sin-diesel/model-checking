@@ -1,150 +1,143 @@
------------------------------ MODULE ipc_pipes -----------------------------
+---- MODULE ipc_pipes ----
 EXTENDS Integers, Sequences
 
-(* --algorithm ipc_pipes
+VARIABLES buffer, reader, writer, readMutex, writeMutex
 
+CONSTANTS BufferSize, MaxIterations
 
-variables buffer = <<>>, reader = 0, writer = 0
+(*--algorithm PipeExample
+variables buffer = <<1, 2, 3, 4, 5>>,
+          reader = 0,
+          writer = 0,
+          item = 0;
 
+        
 define
-    MaxIterations == 10
-    BufferSize == 5
-    BufferEmpty == Len(buffer) = 0
-    BufferFull == Len(buffer) = BufferSize
-    CanRead == Len(buffer) > 0
-    CanWrite == Len(buffer) < BufferSize
-
+  BufferEmpty == Len(buffer) = 0
+  BufferFull == Len(buffer) = BufferSize
+  CanRead == Len(buffer) > 0
+  CanWrite == Len(buffer) < BufferSize
+    
+  BufferSize == 5
+  MaxIterations == 10
 end define;
 
-fair process Reader = 1
-    variables item, i = 0;
-    
-    begin
-       Read:
-        while (i =< Maxiterations) do
-            if (CanRead) then
-                item := Head(buffer);
-                buffer := Tail(buffer);
-                reader := (reader + 1) % BufferSize;
-                i := i + 1;
-            end if
-        end while;
-    end process;
 
-fair process Writer = 2
-    variable value, i = 0;
-    begin
-        Write:
-        while (i =< Maxiterations) do
-            if (CanWrite)  then
-                buffer := Append(buffer, value);
-                writer := (writer + 1) % BufferSize;
-                i := i + 1;
-            end if;
-        end while;
-    end process;
+process Reader = 1
+variable readMutex = FALSE;
+begin
+  read_loop:
+  while TRUE
+  do
+    with mutex = readMutex
+    do
+      await(mutex = FALSE /\ CanRead);
+      readMutex := TRUE;
+      item := Head(buffer);
+      buffer := Tail(buffer);
+      reader := (reader + 1) % BufferSize;
+      \* Introduce random delay
+      await Skip;
+    end with;
+    finish_read:
+    readMutex := FALSE;
+  end while;
+end process;
 
-end algorithm;
+process Writer = 2
+variable writeMutex = FALSE, value = 0;
+begin
+  write_loop:
+  while TRUE
+  do
+    with mutex = writeMutex
+    do
+      await(mutex = FALSE /\ CanWrite);
+      writeMutex := TRUE;
+      value := RandomElement({1, 2, 3, 4, 5});
+      buffer := Append(buffer, value);
+      writer := (writer + 1) % BufferSize;
+      \* Introduce random delay
+      await Skip;
+    end with;
+    finish_write:
+    writeMutex := FALSE;
+  end while;
+end process;
 
-\* Safety Property: Buffer OK
-\* Buffer not overflown
-Invariant "Buffer OK":
-    Len(buffer) <= BufferSize
 
-\* Safety Property: Reader-Writer Exclusion
-\* The reader and writer should not access the buffer at the same time.
-Invariant "Reader-Writer Exclusion":
-    \A i, j \in 1..Len(buffer) :
-        i # j => (reader % BufferSize = i - 1) \/ (writer % BufferSize = i - 1)
-
-\* Liveness Property: Reader Progress
-\* If there is data in the buffer, the reader should eventually read it.
-Fairness "Reader Progress":
-    \A i \in 1..MaxIterations :
-        CanRead => (WF_vars <<item>> : Read)
-
-\* Liveness Property: Writer Progress
-\* If there is space in the buffer, the writer should eventually write to it.
-Fairness "Writer Progress":
-    \A i \in 1..MaxIterations :
-        CanWrite => (WF_vars <<value>> : Write(value)
-
-*)
-\* BEGIN TRANSLATION (chksum(pcal) = "3243781e" /\ chksum(tla) = "418fb04d")
-\* Process variable i of process Reader at line 20 col 21 changed to i_
-CONSTANT defaultInitValue
-VARIABLES buffer, reader, writer, pc
+end algorithm; *)
+\* BEGIN TRANSLATION (chksum(pcal) = "3a553612" /\ chksum(tla) = "9656028a")
+VARIABLES buffer, reader, writer, item, pc
 
 (* define statement *)
-MaxIterations == 10
-BufferSize == 5
 BufferEmpty == Len(buffer) = 0
 BufferFull == Len(buffer) = BufferSize
 CanRead == Len(buffer) > 0
 CanWrite == Len(buffer) < BufferSize
 
-VARIABLES item, i_, value, i
+BufferSize == 5
+MaxIterations == 10
 
-vars == << buffer, reader, writer, pc, item, i_, value, i >>
+VARIABLES readMutex, writeMutex, value
+
+vars == << buffer, reader, writer, item, pc, readMutex, writeMutex, value >>
 
 ProcSet == {1} \cup {2}
 
 Init == (* Global variables *)
-        /\ buffer = <<>>
+        /\ buffer = <<1, 2, 3, 4, 5>>
         /\ reader = 0
         /\ writer = 0
+        /\ item = 0
         (* Process Reader *)
-        /\ item = defaultInitValue
-        /\ i_ = 0
+        /\ readMutex = FALSE
         (* Process Writer *)
-        /\ value = defaultInitValue
-        /\ i = 0
-        /\ pc = [self \in ProcSet |-> CASE self = 1 -> "Read"
-                                        [] self = 2 -> "Write"]
+        /\ writeMutex = FALSE
+        /\ value = 0
+        /\ pc = [self \in ProcSet |-> CASE self = 1 -> "read_loop"
+                                        [] self = 2 -> "write_loop"]
 
-Read == /\ pc[1] = "Read"
-        /\ IF (i_ =< 10)
-              THEN /\ IF (CanRead)
-                         THEN /\ item' = Head(buffer)
-                              /\ buffer' = Tail(buffer)
-                              /\ reader' = (reader + 1) % BufferSize
-                              /\ i_' = i_ + 1
-                         ELSE /\ TRUE
-                              /\ UNCHANGED << buffer, reader, item, i_ >>
-                   /\ pc' = [pc EXCEPT ![1] = "Read"]
-              ELSE /\ pc' = [pc EXCEPT ![1] = "Done"]
-                   /\ UNCHANGED << buffer, reader, item, i_ >>
-        /\ UNCHANGED << writer, value, i >>
+read_loop == /\ pc[1] = "read_loop"
+             /\ LET mutex == readMutex IN
+                  /\ (mutex = FALSE /\ CanRead)
+                  /\ readMutex' = TRUE
+                  /\ item' = Head(buffer)
+                  /\ buffer' = Tail(buffer)
+                  /\ reader' = (reader + 1) % BufferSize
+                  /\ Skip
+             /\ pc' = [pc EXCEPT ![1] = "finish_read"]
+             /\ UNCHANGED << writer, writeMutex, value >>
 
-Reader == Read
+finish_read == /\ pc[1] = "finish_read"
+               /\ readMutex' = FALSE
+               /\ pc' = [pc EXCEPT ![1] = "read_loop"]
+               /\ UNCHANGED << buffer, reader, writer, item, writeMutex, value >>
 
-Write == /\ pc[2] = "Write"
-         /\ IF (i =< 10)
-               THEN /\ IF (CanWrite)
-                          THEN /\ buffer' = Append(buffer, value)
-                               /\ writer' = (writer + 1) % BufferSize
-                               /\ i' = i + 1
-                          ELSE /\ TRUE
-                               /\ UNCHANGED << buffer, writer, i >>
-                    /\ pc' = [pc EXCEPT ![2] = "Write"]
-               ELSE /\ pc' = [pc EXCEPT ![2] = "Done"]
-                    /\ UNCHANGED << buffer, writer, i >>
-         /\ UNCHANGED << reader, item, i_, value >>
+Reader == read_loop \/ finish_read
 
-Writer == Write
+write_loop == /\ pc[2] = "write_loop"
+              /\ LET mutex == writeMutex IN
+                   /\ (mutex = FALSE /\ CanWrite)
+                   /\ writeMutex' = TRUE
+                   /\ value' = RandomElement({1, 2, 3, 4, 5})
+                   /\ buffer' = Append(buffer, value')
+                   /\ writer' = (writer + 1) % BufferSize
+                   /\ Skip
+              /\ pc' = [pc EXCEPT ![2] = "finish_write"]
+              /\ UNCHANGED << reader, item, readMutex >>
 
-(* Allow infinite stuttering to prevent deadlock on termination. *)
-Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
-               /\ UNCHANGED vars
+finish_write == /\ pc[2] = "finish_write"
+                /\ writeMutex' = FALSE
+                /\ pc' = [pc EXCEPT ![2] = "write_loop"]
+                /\ UNCHANGED << buffer, reader, writer, item, readMutex, value >>
+
+Writer == write_loop \/ finish_write
 
 Next == Reader \/ Writer
-           \/ Terminating
 
-Spec == /\ Init /\ [][Next]_vars
-        /\ WF_vars(Reader)
-        /\ WF_vars(Writer)
-
-Termination == <>(\A self \in ProcSet: pc[self] = "Done")
+Spec == Init /\ [][Next]_vars
 
 \* END TRANSLATION 
-====
+
+=============================================================================
